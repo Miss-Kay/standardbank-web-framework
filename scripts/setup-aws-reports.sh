@@ -66,6 +66,32 @@ aws iam create-open-id-connect-provider \
   || echo "OIDC provider already exists — skipping"
 
 # --- 3. IAM role assumable only by Actions runs of this repo ----------------
+# GitHub can issue OIDC tokens with an "immutable" subject that embeds the
+# numeric owner and repo IDs:
+#   repo:owner@86423962/repo@1358460147:ref:refs/heads/main
+# instead of the classic:
+#   repo:owner/repo:ref:refs/heads/main
+# The setting is account-wide and can be switched on after a role is created,
+# which silently breaks every trust policy that only matches the classic form
+# — the failure is an opaque "Not authorized to perform
+# sts:AssumeRoleWithWebIdentity". We trust BOTH forms so either setting works.
+SUBS="\"repo:$REPO:*\""
+if command -v gh >/dev/null 2>&1; then
+  REPO_ID=$(gh api "repos/$REPO" --jq .id 2>/dev/null || echo "")
+  OWNER_ID=$(gh api "repos/$REPO" --jq .owner.id 2>/dev/null || echo "")
+  if [ -n "$REPO_ID" ] && [ -n "$OWNER_ID" ]; then
+    OWNER=${REPO%%/*}
+    NAME=${REPO##*/}
+    SUBS="$SUBS, \"repo:$OWNER@$OWNER_ID/$NAME@$REPO_ID:*\""
+    echo "Trusting both classic and immutable OIDC subjects for $REPO"
+  else
+    echo "WARNING: could not read numeric IDs for $REPO via gh." >&2
+    echo "If the account uses immutable OIDC subject IDs, add that form manually." >&2
+  fi
+else
+  echo "WARNING: gh not found — trusting only the classic OIDC subject form." >&2
+fi
+
 TRUST=$(cat <<JSON
 {
   "Version": "2012-10-17",
@@ -77,7 +103,7 @@ TRUST=$(cat <<JSON
     "Action": "sts:AssumeRoleWithWebIdentity",
     "Condition": {
       "StringEquals": { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
-      "StringLike":   { "token.actions.githubusercontent.com:sub": "repo:$REPO:*" }
+      "StringLike":   { "token.actions.githubusercontent.com:sub": [ $SUBS ] }
     }
   }]
 }
@@ -89,7 +115,7 @@ if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
   EXISTING_SUB=$(aws iam get-role --role-name "$ROLE_NAME" \
     --query 'Role.AssumeRolePolicyDocument.Statement[0].Condition.StringLike."token.actions.githubusercontent.com:sub"' \
     --output text 2>/dev/null || echo "")
-  if [ -n "$EXISTING_SUB" ] && [ "$EXISTING_SUB" != "None" ] && [ "$EXISTING_SUB" != "repo:$REPO:*" ]; then
+  if [ -n "$EXISTING_SUB" ] && [ "$EXISTING_SUB" != "None" ] && ! echo "$EXISTING_SUB" | grep -q "repo:$REPO:\*"; then
     echo "ERROR: role $ROLE_NAME is already trusted by $EXISTING_SUB, not repo:$REPO:*." >&2
     echo "Refusing to repoint it — that would break the other repo's CI." >&2
     echo "Re-run with a different name, e.g. ROLE_NAME=my-role $0 $BUCKET $REGION $REPO" >&2

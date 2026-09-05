@@ -173,6 +173,30 @@ ROLE_NAME=standardbank-report-publisher \
 The S3 publish steps are skipped automatically until the `REPORT_BUCKET`
 variable exists, so CI is green before AWS is configured.
 
+#### Immutable OIDC subjects
+
+If the GitHub account has **immutable OIDC subject IDs** enabled, the token's
+`sub` claim embeds numeric IDs:
+
+```
+repo:Miss-Kay@86423962/standardbank-web-framework@1358460147:ref:refs/heads/main
+```
+
+rather than `repo:Miss-Kay/standardbank-web-framework:ref:refs/heads/main`. A
+trust policy matching only the classic form then never matches, and the run
+fails with an opaque `Not authorized to perform sts:AssumeRoleWithWebIdentity`.
+The setting is account-wide and can be switched on *after* a role is created,
+so it breaks working pipelines with no change to them.
+
+The bootstrap script looks the numeric IDs up with `gh` and trusts both forms.
+To decode what your runner is actually sending:
+
+```bash
+curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+  "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value \
+  | cut -d. -f2 | base64 -d 2>/dev/null | jq .sub
+```
+
 ### Note on bot protection
 
 standardbank.co.za permits automation, so both suites run live against
