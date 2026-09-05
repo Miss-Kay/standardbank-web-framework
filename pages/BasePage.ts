@@ -16,32 +16,41 @@ export abstract class BasePage {
   /**
    * Cookie/consent banners are the #1 cause of flaky journey tests — the
    * OneTrust overlay intercepts clicks on the nav until it is dismissed.
-   * We dismiss it with the least-permissive control available (save
-   * defaults / close) and only fall back to "accept all" if the banner
-   * offers nothing else, so the run doesn't opt into more tracking than a
+   * We dismiss it with the least-permissive control available (reject /
+   * save defaults) and only fall back to "accept all" if the banner offers
+   * nothing else, so the run doesn't opt into more tracking than a
    * privacy-conscious customer would.
+   *
+   * The early return matters: CI runners are often served no banner at all,
+   * and without it every candidate below burned its 3s timeout in turn —
+   * 15s of dead waiting on every single page open.
    */
   protected async dismissCookieBanner(): Promise<void> {
+    const banner = this.page.locator('#onetrust-banner-sdk, #onetrust-consent-sdk');
+    const bannerShown = await banner
+      .first()
+      .waitFor({ state: 'visible', timeout: 5000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!bannerShown) return; // no banner served — nothing to dismiss
+
     const candidates = [
-      this.page.locator('.save-preference-btn-handler'),          // Allow Selected
-      this.page.locator('#onetrust-reject-all-handler'),          // Reject All
-      this.page.locator('#onetrust-accept-btn-handler'),          // Accept (banner)
-      this.page.locator('#accept-recommended-btn-handler'),       // Accept (prefs)
+      this.page.locator('#onetrust-reject-all-handler'),         // Reject All
+      this.page.locator('.save-preference-btn-handler'),         // Allow Selected
+      this.page.locator('#onetrust-accept-btn-handler'),         // Accept (banner)
+      this.page.locator('#accept-recommended-btn-handler'),      // Accept (prefs)
       this.page.getByRole('button', { name: /accept|agree|allow all/i }),
     ];
     for (const candidate of candidates) {
       try {
         await candidate.first().click({ timeout: 3000 });
-        await this.page.locator('#onetrust-consent-sdk').waitFor({
-          state: 'hidden',
-          timeout: 5000,
-        });
+        await banner.first().waitFor({ state: 'hidden', timeout: 5000 });
         return;
       } catch {
         /* try the next control */
       }
     }
-    // No banner shown (consent already stored, or none served) — fine.
+    console.warn('[CONSENT] banner was shown but could not be dismissed');
   }
 
   /**

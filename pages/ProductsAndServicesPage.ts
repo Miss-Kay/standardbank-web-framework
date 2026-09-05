@@ -20,7 +20,7 @@ export class ProductsAndServicesPage extends BasePage {
   /** SLA assertion: the landing page must actually render, not hang blank. */
   async assertLoaded(slaMs = 20_000): Promise<void> {
     const start = Date.now();
-    await this.page.waitForURL(site.productsUrlPattern, { timeout: slaMs });
+    await expect(this.page).toHaveURL(site.productsUrlPattern, { timeout: slaMs });
     await expect(
       this.page.getByRole('heading', { name: site.productsHeading }).first(),
     ).toBeVisible({ timeout: slaMs });
@@ -56,8 +56,8 @@ export class ProductsAndServicesPage extends BasePage {
     const card = this.card(pillar);
     await card.scrollIntoViewIfNeeded();
     await card.getByRole('link').first().click();
-    await this.page.waitForURL(new RegExp(escapeRegExp(expectedPath), 'i'), {
-      timeout: 20_000,
+    await expect(this.page).toHaveURL(new RegExp(escapeRegExp(expectedPath), 'i'), {
+      timeout: 30_000,
     });
     await this.checkpointReached('03-pillar-opened');
   }

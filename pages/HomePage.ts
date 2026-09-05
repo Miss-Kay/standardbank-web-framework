@@ -92,10 +92,14 @@ export class HomePage extends BasePage {
    */
   async selectSegment(segment: string): Promise<void> {
     await this.openSegment(segment);
-    // Generous: this is a cold first navigation on a heavy marketing page,
-    // and it follows the consent-banner dismissal. A CI runner starting from
-    // an empty cache needed more than 20s here.
-    await this.page.waitForURL(site.segmentUrlPattern, { timeout: 45_000 });
+    // Deliberately toHaveURL and not waitForURL. waitForURL waits on the
+    // navigation lifecycle, so it blocks until the page finishes loading —
+    // and this page pulls in enough third-party tracking (Adobe demdex, an
+    // invisible reCAPTCHA, DoubleClick) that the load never settles on a CI
+    // runner. The trace showed the URL was already correct while the wait
+    // still timed out at 45s. toHaveURL polls page.url(), which is what we
+    // actually mean by "we are on the Personal section".
+    await expect(this.page).toHaveURL(site.segmentUrlPattern, { timeout: 30_000 });
     await expect(
       this.page.locator('.header__top-bar-nav-item--active').filter({ hasText: segment }),
     ).toBeVisible({ timeout: 20_000 });

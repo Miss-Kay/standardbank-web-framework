@@ -113,9 +113,9 @@ export class ProductListingPage extends BasePage {
     await expect(card, `no product card matching "${product}"`).toBeVisible({ timeout: 10_000 });
     await card.scrollIntoViewIfNeeded();
     await card.getByRole('link', { name: /tell me more/i }).first().click();
-    await this.page.waitForURL(
+    await expect(this.page).toHaveURL(
       new RegExp(expectedPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'),
-      { timeout: 20_000 },
+      { timeout: 30_000 },
     );
     await this.checkpointReached('05b-product-opened');
   }

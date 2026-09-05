@@ -23,9 +23,9 @@ export class PillarPage extends BasePage {
       .first();
     await card.scrollIntoViewIfNeeded();
     await card.getByRole('link').first().click();
-    await this.page.waitForURL(
+    await expect(this.page).toHaveURL(
       new RegExp(expectedPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'),
-      { timeout: 20_000 },
+      { timeout: 30_000 },
     );
     await this.checkpointReached('04b-category-opened');
   }
