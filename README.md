@@ -5,7 +5,7 @@ site the way a customer does and asserts it still works. Two suites:
 
 | Suite | What it proves |
 | --- | --- |
-| `tests/wealth-link-integrity.spec.ts` | Land on standardbank.co.za, click **Wealth**, and verify **every link on the page it opens actually resolves**. |
+| `tests/wealth-link-integrity.spec.ts` | Land on standardbank.co.za, click **Wealth**, and verify the page still offers **the same links as the committed baseline** and that **every one of them resolves**. |
 | `tests/products-journey.spec.ts` | Land on standardbank.co.za, select **Personal → Products and Services**, drill into a product listing, and reach a product page. |
 
 Built to be simple, maintainable and self-healing, with CI/CD via GitHub
@@ -29,6 +29,35 @@ framework handles rather than papers over:
 2. **The page lazy-loads.** Links below the fold are not in the DOM until it
    has been scrolled, so a naive check silently covers only the top of the
    page. `WealthPage.links()` scrolls the full height first.
+
+### The baseline — catching links that go *missing*
+
+Resolving every link proves nothing is broken. It cannot prove nothing has
+gone **missing**: a page that quietly loses half its navigation still passes a
+pure link check, because everything left over resolves perfectly. That is the
+more common regression on a marketing site — a section is dropped in a CMS
+edit and no one notices, because nothing 404s.
+
+So the link set is committed as a snapshot in
+`fixtures/wealth-links.baseline.json` (62 links) and diffed on every run:
+
+- **Missing since baseline → the run fails.** The customer can no longer reach
+  that page from here. This also catches a link being *re-pointed*: the old URL
+  disappears, and the new one shows up as an addition.
+- **New since baseline → reported, never failed.** Marketing pages gain content
+  constantly, and failing on additions makes the suite noisy — a noisy suite
+  gets ignored.
+
+Links are keyed on origin + path + query with the fragment dropped, so a
+changed `#section` cannot churn the snapshot. Accept intentional changes
+deliberately:
+
+```bash
+npm run baseline:update
+```
+
+The diff is attached to every run as `link-baseline-diff.md`, so the HTML
+report explains what changed without anyone reading the logs.
 
 ### How a link is judged
 
@@ -132,6 +161,7 @@ Three design rules keep it maintainable:
 npm ci
 npx playwright install --with-deps chromium
 npm run test:links          # the Wealth link check
+npm run baseline:update     # accept intentional link-set changes
 npm run test:headed         # watch it drive the site
 npm run report              # open the HTML report
 ```
@@ -213,6 +243,7 @@ a clean network.
 
 ## Roadmap
 
+- Extend the baseline to `<img>`/asset URLs, so a broken hero image fails too
 - Crawl one level deeper from the Wealth page (links of linked pages)
 - Accessibility budget (axe) on the Wealth and product listing pages
 - Lighthouse performance budget on the product listing

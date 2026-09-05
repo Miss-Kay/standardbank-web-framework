@@ -1,8 +1,12 @@
 import { expect, test } from '@playwright/test';
 import { HomePage } from '../pages/HomePage';
 import { WealthPage } from '../pages/WealthPage';
-import { groupByVerdict } from '../utils/linkChecker';
+import { groupByVerdict, PageLink } from '../utils/linkChecker';
 import { site } from '../fixtures/siteProfile';
+import path from 'path';
+
+/** Committed snapshot of the Wealth page's link set. */
+const BASELINE_PATH = path.join(__dirname, '..', 'fixtures', 'wealth-links.baseline.json');
 
 /**
  * WEALTH PAGE LINK INTEGRITY — Standard Bank
@@ -49,10 +53,25 @@ test.describe(`${site.name} — Wealth page link integrity`, () => {
         .toEqual([]);
     });
 
-    await test.step('Step 4 — every link on the page resolves', async () => {
-      const links = await wealth.links();
+    let links: PageLink[] = [];
+
+    await test.step('Step 4 — the page still offers the same links as the baseline', async () => {
+      links = await wealth.links();
       expect(links.length, 'no links were collected — the page did not render').toBeGreaterThan(10);
 
+      // Resolving every link proves nothing is broken; it cannot prove nothing
+      // has gone MISSING. A page that loses half its navigation still passes a
+      // pure link check, because everything left over resolves perfectly.
+      const diff = await wealth.compareToBaseline(BASELINE_PATH, links);
+      expect(
+        diff.missing,
+        `Links present at baseline but gone from the page — these journeys are `
+          + `no longer reachable from here:\n`
+          + diff.missing.map(link => `  - "${link.text}" → ${link.key}`).join('\n'),
+      ).toEqual([]);
+    });
+
+    await test.step('Step 5 — every link on the page resolves', async () => {
       const results = await wealth.checkAllLinks(links);
       const grouped = groupByVerdict(results);
 

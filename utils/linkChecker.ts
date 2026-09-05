@@ -18,8 +18,14 @@ export type LinkVerdict = 'ok' | 'broken' | 'blocked' | 'unreachable' | 'skipped
 export interface PageLink {
   /** The raw href attribute as authored. */
   href: string;
-  /** Resolved absolute URL. */
+  /** Resolved absolute URL (fragment included — this is what gets fetched). */
   url: string;
+  /**
+   * Stable identity: origin + path + query, with the fragment dropped. Two
+   * anchors to /page#a and /page#b are one link. This is what the baseline
+   * snapshot is keyed on, so a changed #section can't churn the snapshot.
+   */
+  key: string;
   /** Visible link text (first occurrence), for the report. */
   text: string;
   /** Number of times this URL appears on the page. */
@@ -49,7 +55,14 @@ export async function collectLinks(page: Page): Promise<PageLink[]> {
     anchors.map(a => ({
       href: a.getAttribute('href') ?? '',
       url: (a as HTMLAnchorElement).href,
-      text: (a.textContent ?? '').trim().replace(/\s+/g, ' ').slice(0, 80),
+      text: (a.textContent ?? '')
+        // Icon links carry Sketch's SVG export artifact in their text
+        // ("Mozambique Created with Sketch. Mozambique"), which makes every
+        // report harder to read. It is presentational noise, so drop it.
+        .replace(/Created with Sketch\.?/gi, ' ')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .slice(0, 80),
     })),
   );
 
@@ -79,6 +92,7 @@ export async function collectLinks(page: Page): Promise<PageLink[]> {
     byUrl.set(key, {
       href,
       url: parsed.toString(),
+      key,
       text: link.text,
       occurrences: 1,
       internal: parsed.host === pageHost,

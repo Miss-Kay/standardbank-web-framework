@@ -11,6 +11,16 @@ import {
   verifyBlockedInBrowser,
 } from '../utils/linkChecker';
 import { test } from '@playwright/test';
+import {
+  BaselineDiff,
+  baselineExists,
+  diffAgainstBaseline,
+  formatDiff,
+  isUpdateRun,
+  loadBaseline,
+  saveBaseline,
+  toBaseline,
+} from '../utils/linkBaseline';
 
 /**
  * Wealth and Investment landing page.
@@ -90,6 +100,47 @@ export class WealthPage extends BasePage {
       );
     }
     return results;
+  }
+
+  /**
+   * Diff the collected links against the committed snapshot.
+   *
+   * On an UPDATE_BASELINE=1 run this rewrites the snapshot instead of
+   * checking it, and returns an empty diff.
+   */
+  async compareToBaseline(baselinePath: string, links: PageLink[]): Promise<BaselineDiff> {
+    if (isUpdateRun()) {
+      saveBaseline(baselinePath, toBaseline(this.page.url(), links));
+      console.info(`[BASELINE] snapshot rewritten with ${links.length} links → ${baselinePath}`);
+      return { missing: [], added: [] };
+    }
+
+    if (!baselineExists(baselinePath)) {
+      throw new Error(
+        `[BASELINE] no snapshot at ${baselinePath}. `
+          + 'Capture one with: UPDATE_BASELINE=1 npm run test:links',
+      );
+    }
+
+    const baseline = loadBaseline(baselinePath);
+    const diff = diffAgainstBaseline(baseline, links);
+
+    await test.info().attach('link-baseline-diff.md', {
+      body: formatDiff(baseline, diff, links.length),
+      contentType: 'text/markdown',
+    });
+
+    console.info(
+      `[BASELINE] ${baseline.linkCount} at baseline, ${links.length} now `
+        + `(missing=${diff.missing.length} added=${diff.added.length})`,
+    );
+    for (const link of diff.missing) {
+      console.info(`[BASELINE] MISSING "${link.text || '(no text)'}" → ${link.key}`);
+    }
+    for (const link of diff.added) {
+      console.info(`[BASELINE] NEW     "${link.text || '(no text)'}" → ${link.key}`);
+    }
+    return diff;
   }
 
   /**
