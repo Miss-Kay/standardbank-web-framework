@@ -1,5 +1,8 @@
 name: OIDC debug (temporary)
-on: workflow_dispatch
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
 permissions:
   contents: read
   id-token: write
