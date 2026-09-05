@@ -161,6 +161,15 @@ IAM role, then prints the `gh` commands that wire the repo to AWS:
 ./scripts/setup-aws-reports.sh <bucket-name> <aws-region> <github-org/repo>
 ```
 
+The role name defaults to `<repo-name>-report-publisher` so two projects in
+one AWS account never share a role, and the script refuses to repoint a role
+that another repository already trusts. This project uses:
+
+```bash
+ROLE_NAME=standardbank-report-publisher \
+  ./scripts/setup-aws-reports.sh standardbank-suite-reports eu-west-1 Miss-Kay/standardbank-web-framework
+```
+
 The S3 publish steps are skipped automatically until the `REPORT_BUCKET`
 variable exists, so CI is green before AWS is configured.
 

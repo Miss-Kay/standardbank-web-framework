@@ -21,7 +21,11 @@ set -euo pipefail
 BUCKET=${1:?usage: setup-aws-reports.sh <bucket-name> <aws-region> <github-org/repo>}
 REGION=${2:?usage: setup-aws-reports.sh <bucket-name> <aws-region> <github-org/repo>}
 REPO=${3:?usage: setup-aws-reports.sh <bucket-name> <aws-region> <github-org/repo>}
-ROLE_NAME=${ROLE_NAME:-playwright-report-publisher}
+# Derive the role name from the repo so two projects in the same AWS account
+# never share one role. They used to: a shared "playwright-report-publisher"
+# meant running this script for a second repo silently repointed the first
+# repo's trust policy and bucket grant at the new project, breaking its CI.
+ROLE_NAME=${ROLE_NAME:-$(basename "$REPO")-report-publisher}
 
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 echo "Account: $ACCOUNT_ID | Bucket: $BUCKET | Region: $REGION | Repo: $REPO"
@@ -81,8 +85,18 @@ JSON
 )
 
 if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
+  # Refuse to repoint a role that belongs to a different repository.
+  EXISTING_SUB=$(aws iam get-role --role-name "$ROLE_NAME" \
+    --query 'Role.AssumeRolePolicyDocument.Statement[0].Condition.StringLike."token.actions.githubusercontent.com:sub"' \
+    --output text 2>/dev/null || echo "")
+  if [ -n "$EXISTING_SUB" ] && [ "$EXISTING_SUB" != "None" ] && [ "$EXISTING_SUB" != "repo:$REPO:*" ]; then
+    echo "ERROR: role $ROLE_NAME is already trusted by $EXISTING_SUB, not repo:$REPO:*." >&2
+    echo "Refusing to repoint it — that would break the other repo's CI." >&2
+    echo "Re-run with a different name, e.g. ROLE_NAME=my-role $0 $BUCKET $REGION $REPO" >&2
+    exit 1
+  fi
   aws iam update-assume-role-policy --role-name "$ROLE_NAME" --policy-document "$TRUST"
-  echo "Role $ROLE_NAME already existed — trust policy refreshed"
+  echo "Role $ROLE_NAME already existed for this repo — trust policy refreshed"
 else
   aws iam create-role --role-name "$ROLE_NAME" \
     --assume-role-policy-document "$TRUST" >/dev/null
