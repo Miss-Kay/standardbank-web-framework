@@ -92,10 +92,13 @@ export class HomePage extends BasePage {
    */
   async selectSegment(segment: string): Promise<void> {
     await this.openSegment(segment);
-    await this.page.waitForURL(site.segmentUrlPattern, { timeout: 20_000 });
+    // Generous: this is a cold first navigation on a heavy marketing page,
+    // and it follows the consent-banner dismissal. A CI runner starting from
+    // an empty cache needed more than 20s here.
+    await this.page.waitForURL(site.segmentUrlPattern, { timeout: 45_000 });
     await expect(
       this.page.locator('.header__top-bar-nav-item--active').filter({ hasText: segment }),
-    ).toBeVisible({ timeout: 10_000 });
+    ).toBeVisible({ timeout: 20_000 });
   }
 
   /** Step 2 — open Products and Services from the segment's section nav. */
