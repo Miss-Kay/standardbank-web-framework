@@ -31,7 +31,14 @@ ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 echo "Account: $ACCOUNT_ID | Bucket: $BUCKET | Region: $REGION | Repo: $REPO"
 
 # --- 1. Report bucket with static website hosting --------------------------
-if [ "$REGION" = "us-east-1" ]; then
+# Idempotent: the script is meant to be safe to re-run, and it will be re-run,
+# because a later step can fail (a missing GitHub repo stops the role step) and
+# leave the bucket already made. Under `set -e` an unconditional create-bucket
+# aborts the whole script with BucketAlreadyOwnedByYou on the second attempt —
+# so the retry fails before reaching the step that failed last time.
+if aws s3api head-bucket --bucket "$BUCKET" >/dev/null 2>&1; then
+  echo "Bucket $BUCKET already exists — skipping creation"
+elif [ "$REGION" = "us-east-1" ]; then
   aws s3api create-bucket --bucket "$BUCKET" --region "$REGION"
 else
   aws s3api create-bucket --bucket "$BUCKET" --region "$REGION" \
@@ -75,21 +82,52 @@ aws iam create-open-id-connect-provider \
 # which silently breaks every trust policy that only matches the classic form
 # — the failure is an opaque "Not authorized to perform
 # sts:AssumeRoleWithWebIdentity". We trust BOTH forms so either setting works.
+# Read a numeric ID from the GitHub API, or fail.
+#
+# The validation is not paranoia. `gh api` writes its error BODY to stdout and
+# exits non-zero, so on a repo that does not exist yet this returns
+#   {"message":"Not Found","documentation_url":"...","status":"404"}
+# and `$(gh api ... 2>/dev/null || echo "")` captures that JSON as the "ID" —
+# 2>/dev/null only hides stderr, and the || branch appends to the output rather
+# than replacing it. Splicing that into the trust policy produced an opaque
+#   MalformedPolicyDocument: This policy contains invalid Json
+# from CreateRole. Requiring digits makes the failure impossible.
+lookup_numeric_id() {
+  local out
+  out=$(gh api "repos/$1" --jq "$2" 2>/dev/null) || return 1
+  case "$out" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  printf '%s' "$out"
+}
+
 SUBS="\"repo:$REPO:*\""
-if command -v gh >/dev/null 2>&1; then
-  REPO_ID=$(gh api "repos/$REPO" --jq .id 2>/dev/null || echo "")
-  OWNER_ID=$(gh api "repos/$REPO" --jq .owner.id 2>/dev/null || echo "")
-  if [ -n "$REPO_ID" ] && [ -n "$OWNER_ID" ]; then
-    OWNER=${REPO%%/*}
-    NAME=${REPO##*/}
-    SUBS="$SUBS, \"repo:$OWNER@$OWNER_ID/$NAME@$REPO_ID:*\""
-    echo "Trusting both classic and immutable OIDC subjects for $REPO"
-  else
-    echo "WARNING: could not read numeric IDs for $REPO via gh." >&2
-    echo "If the account uses immutable OIDC subject IDs, add that form manually." >&2
-  fi
-else
+if ! command -v gh >/dev/null 2>&1; then
   echo "WARNING: gh not found — trusting only the classic OIDC subject form." >&2
+  echo "If this account uses immutable OIDC subject IDs, CI will fail to assume" >&2
+  echo "the role. Install gh and re-run, or add the numeric form by hand." >&2
+elif REPO_ID=$(lookup_numeric_id "$REPO" .id) \
+  && OWNER_ID=$(lookup_numeric_id "$REPO" .owner.id); then
+  OWNER=${REPO%%/*}
+  NAME=${REPO##*/}
+  SUBS="$SUBS, \"repo:$OWNER@$OWNER_ID/$NAME@$REPO_ID:*\""
+  echo "Trusting both classic and immutable OIDC subjects for $REPO"
+  echo "  owner id $OWNER_ID, repo id $REPO_ID"
+else
+  echo "ERROR: could not read numeric IDs for $REPO." >&2
+  echo "" >&2
+  echo "Most often this means the repository does not exist on GitHub yet —" >&2
+  echo "create and push it first, then re-run this script:" >&2
+  echo "  gh repo create $REPO --public --source=. --push" >&2
+  echo "" >&2
+  echo "It can also mean gh is not authenticated (check: gh auth status)." >&2
+  echo "" >&2
+  echo "Refusing to continue: this account sends immutable OIDC subject IDs, so" >&2
+  echo "a role trusting only the classic form would fail at assume time with an" >&2
+  echo "opaque 'Not authorized to perform sts:AssumeRoleWithWebIdentity'." >&2
+  echo "Set ALLOW_CLASSIC_SUBJECT_ONLY=1 to proceed anyway." >&2
+  [ "${ALLOW_CLASSIC_SUBJECT_ONLY:-}" = "1" ] || exit 1
+  echo "ALLOW_CLASSIC_SUBJECT_ONLY=1 set — continuing with the classic form only." >&2
 fi
 
 TRUST=$(cat <<JSON
@@ -109,6 +147,16 @@ TRUST=$(cat <<JSON
 }
 JSON
 )
+
+# Validate before handing it to AWS. CreateRole reports only
+# "This policy contains invalid Json" with no indication of what or where.
+if command -v python3 >/dev/null 2>&1; then
+  if ! printf '%s' "$TRUST" | python3 -m json.tool >/dev/null 2>&1; then
+    echo "ERROR: the generated trust policy is not valid JSON:" >&2
+    printf '%s\n' "$TRUST" >&2
+    exit 1
+  fi
+fi
 
 if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
   # Refuse to repoint a role that belongs to a different repository.

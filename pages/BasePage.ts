@@ -26,9 +26,23 @@ export abstract class BasePage {
    * 15s of dead waiting on every single page open.
    */
   protected async dismissCookieBanner(): Promise<void> {
-    const banner = this.page.locator('#onetrust-banner-sdk, #onetrust-consent-sdk');
+    // Wait on the BANNER, not the #onetrust-consent-sdk wrapper.
+    //
+    // The wrapper renders 1440x0 — full width, zero height — so Playwright
+    // correctly reports it as not visible, and a presence check against it
+    // concludes "no banner was served" whether or not one is on screen. It
+    // also sorts first in DOM order, so including it in a comma selector
+    // and taking .first() means the wrapper is the element being checked.
+    //
+    // That returns the right answer here today only by accident: this site
+    // currently serves no banner at all, so "not visible" happens to be
+    // correct. The same code on Vodacom — same OneTrust, same wrapper, but
+    // a banner actually shown — silently skipped dismissal and left a
+    // full-viewport consent overlay intercepting every subsequent click.
+    const banner = this.page.locator('#onetrust-banner-sdk');
+    const darkFilter = this.page.locator('.onetrust-pc-dark-filter');
+
     const bannerShown = await banner
-      .first()
       .waitFor({ state: 'visible', timeout: 5000 })
       .then(() => true)
       .catch(() => false);
@@ -44,7 +58,14 @@ export abstract class BasePage {
     for (const candidate of candidates) {
       try {
         await candidate.first().click({ timeout: 3000 });
-        await banner.first().waitFor({ state: 'hidden', timeout: 5000 });
+        // Both must go. Some OneTrust configurations render the banner as a
+        // modal with a separate full-viewport dark filter, and the filter is
+        // the element that intercepts clicks — so the banner hiding is not
+        // on its own proof that the page is usable again.
+        await banner.waitFor({ state: 'hidden', timeout: 5000 });
+        await darkFilter.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {
+          /* not every OneTrust build renders one */
+        });
         return;
       } catch {
         /* try the next control */
